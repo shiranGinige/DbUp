@@ -31,7 +31,7 @@ namespace DbUp.Helpers
         public TemporarySqlDatabase(string name, string instanceName)
         {
             databaseName = name;
-            connectionString = string.Format("Server={0};Database={1};Trusted_connection=true;Pooling=false", instanceName, databaseName);
+            connectionString = string.Format("Server={0};Initial Catalog={1};Integrated Security=True", instanceName, databaseName);
             sqlConnection = new SqlConnection(connectionString);
             database = new AdHocSqlRunner(sqlConnection.CreateCommand, "dbo", () => true);
 

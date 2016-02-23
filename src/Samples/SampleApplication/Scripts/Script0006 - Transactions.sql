@@ -5,4 +5,4 @@ create table $schema$.Foo(
 )
 go
 
-insert into $schema$.[Entry] values()
+insert into $schema$.[Foo] values('Test')

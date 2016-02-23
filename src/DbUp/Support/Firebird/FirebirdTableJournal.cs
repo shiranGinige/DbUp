@@ -88,6 +88,16 @@ namespace DbUp.Support.Firebird
             return scripts.ToArray();
         }
 
+        public string[] GetExecutedScriptsOnBatchNumber(int batchNumber)
+        {
+            throw new NotImplementedException();
+        }
+
+        public int GetCurrentBatchNumber()
+        {
+            throw new NotImplementedException();
+        }
+
         private void ExecuteCommand(Func<IDbCommand> dbCommandFactory, string sql)
         {
             using (var command = dbCommandFactory())
@@ -150,6 +160,11 @@ namespace DbUp.Support.Firebird
                     command.ExecuteNonQuery();
                 }
             });
+        }
+
+        public void UpdateScriptEntry(string scriptName)
+        {
+            throw new NotImplementedException();
         }
 
         private static string GetExecutedScriptsSql(string table)

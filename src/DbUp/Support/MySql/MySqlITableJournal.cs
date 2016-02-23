@@ -79,6 +79,16 @@ namespace DbUp.Support.MySql
             return scripts.ToArray();
         }
 
+        public string[] GetExecutedScriptsOnBatchNumber(int batchNumber)
+        {
+            throw new NotImplementedException();
+        }
+
+        public int GetCurrentBatchNumber()
+        {
+            throw new NotImplementedException();
+        }
+
         /// <summary>
         /// Records an upgrade script for a database.
         /// </summary>
@@ -124,6 +134,11 @@ namespace DbUp.Support.MySql
                     command.ExecuteNonQuery();
                 }
             });
+        }
+
+        public void UpdateScriptEntry(string scriptName)
+        {
+            throw new NotImplementedException();
         }
 
         private static string GetExecutedScriptsSql(string table)

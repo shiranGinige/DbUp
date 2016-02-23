@@ -46,6 +46,11 @@ namespace DbUp.Support.SqlServer
         /// <returns>All executed scripts.</returns>
         public string[] GetExecutedScripts()
         {
+            return ExecutedScripts();
+        }
+
+        private string[] ExecutedScripts(int? batchNumber=null)
+        {
             log().WriteInformation("Fetching list of already executed scripts.");
             var exists = DoesTableExist();
             if (!exists)
@@ -55,17 +60,19 @@ namespace DbUp.Support.SqlServer
             }
 
             var scripts = new List<string>();
+
             connectionManager().ExecuteCommandsWithManagedConnection(dbCommandFactory =>
             {
                 using (var command = dbCommandFactory())
                 {
-                    command.CommandText = GetExecutedScriptsSql(schema, table);
+                    var script = batchNumber.HasValue ? GetExecutedScriptsByBatchNumberSql(schema, table, batchNumber.Value) : GetExecutedScriptsSql(schema, table);
+                    command.CommandText = script;
                     command.CommandType = CommandType.Text;
 
                     using (var reader = command.ExecuteReader())
                     {
                         while (reader.Read())
-                            scripts.Add((string)reader[0]);
+                            scripts.Add((string) reader[0]);
                     }
                 }
             });
@@ -74,11 +81,55 @@ namespace DbUp.Support.SqlServer
         }
 
         /// <summary>
+        /// Gets the executed scripts with the passed in BatchNumber
+        /// </summary>
+        /// <param name="batchNumber"></param>
+        /// <returns></returns>
+        public string[] GetExecutedScriptsOnBatchNumber(int batchNumber)
+        {
+            return ExecutedScripts(batchNumber);
+        }
+
+        /// <summary>
+        /// Gets the current batch number
+        /// </summary>
+        /// <returns></returns>
+        public int GetCurrentBatchNumber()
+        {
+            int currnetVersion = 0;
+            connectionManager().ExecuteCommandsWithManagedConnection(dbCommandFactory =>
+            {
+                using (var command = dbCommandFactory())
+                {
+                    command.CommandText = GetCurrentBatchNumberSql(schema, table);
+                    command.CommandType = CommandType.Text;
+
+                    var result = command.ExecuteScalar() as int?;
+                    currnetVersion = result ?? 1;
+                }
+            });
+            return currnetVersion;
+        }
+
+
+        protected string GetCurrentBatchNumberSql(string schema, string table)
+        {
+            return string.Format("SELECT MAX(BatchNumber) FROM {0}", CreateTableName(schema, table));
+
+        }
+
+        /// <summary>
         /// Create an SQL statement which will retrieve all executed scripts in order.
         /// </summary>
         protected virtual string GetExecutedScriptsSql(string schema, string table)
         {
             return string.Format("select [ScriptName] from {0} order by [ScriptName]", CreateTableName(schema, table));
+        }
+
+        ///
+        protected virtual string GetExecutedScriptsByBatchNumberSql(string schema, string table , int batchNumber)
+        {
+            return string.Format("select [ScriptName] from {0} where BatchNumber={1} order by [ScriptName] ", CreateTableName(schema, table), batchNumber);
         }
 
         /// <summary>
@@ -104,13 +155,18 @@ namespace DbUp.Support.SqlServer
 
                     log().WriteInformation(string.Format("The {0} table has been created", CreateTableName(schema, table)));
                 });
+
+                CheckBatchNumberColumnExistsAndAddIfNot();
             }
 
+
+            var currentBatchNumber = GetCurrentBatchNumber();
             connectionManager().ExecuteCommandsWithManagedConnection(dbCommandFactory =>
             {
+                var nextBatchNumber = currentBatchNumber+1;
                 using (var command = dbCommandFactory())
                 {
-                    command.CommandText = string.Format("insert into {0} (ScriptName, Applied) values (@scriptName, @applied)", CreateTableName(schema, table));
+                    command.CommandText = string.Format("insert into {0} (ScriptName, Applied, BatchNumber) values (@scriptName, @applied, @batchNumber)", CreateTableName(schema, table));
 
                     var scriptNameParam = command.CreateParameter();
                     scriptNameParam.ParameterName = "scriptName";
@@ -122,10 +178,61 @@ namespace DbUp.Support.SqlServer
                     appliedParam.Value = DateTime.Now;
                     command.Parameters.Add(appliedParam);
 
+                    var batchNumber = command.CreateParameter();
+                    batchNumber.ParameterName = "batchNumber";
+                    batchNumber.Value = nextBatchNumber;
+                    command.Parameters.Add(batchNumber);
+
                     command.CommandType = CommandType.Text;
                     command.ExecuteNonQuery();
                 }
             });
+        }
+
+        public void UpdateScriptEntry(string scriptName)
+        {
+            connectionManager().ExecuteCommandsWithManagedConnection(dbCommandFactory =>
+            {
+                var newScriptName = string.Format("{0}_{1}", "rolledback", scriptName);
+                using (var command = dbCommandFactory())
+                {
+                    command.CommandText = string.Format("update {0} set ScriptName = @newScriptName where ScriptName = @scriptName", CreateTableName(schema, table));
+
+                    var scriptNameParam = command.CreateParameter();
+                    scriptNameParam.ParameterName = "scriptName";
+                    scriptNameParam.Value = scriptName;
+                    command.Parameters.Add(scriptNameParam);
+
+                    var newScriptNameParam = command.CreateParameter();
+                    newScriptNameParam.ParameterName = "newScriptName";
+                    newScriptNameParam.Value = newScriptName;
+                    command.Parameters.Add(newScriptNameParam);
+
+                    command.CommandType = CommandType.Text;
+                    command.ExecuteNonQuery();
+                }
+            });
+        }
+        private void CheckBatchNumberColumnExistsAndAddIfNot()
+        {
+            var batchNumberColumnExists = DoesBatchNumberColumnExists();
+            if (!batchNumberColumnExists)
+            {
+                log().WriteInformation(string.Format("Adding BatchNumber column"));
+
+                connectionManager().ExecuteCommandsWithManagedConnection(dbCommandFactory =>
+                {
+                    using (var command = dbCommandFactory())
+                    {
+                        command.CommandText = AddBatchNumberColumn(schema, table);
+
+                        command.CommandType = CommandType.Text;
+                        command.ExecuteNonQuery();
+                    }
+
+                    log().WriteInformation(string.Format("Added BatchNumber column"));
+                });
+            }
         }
 
         /// <summary>Generates an SQL statement that, when exectuted, will create the journal database table.</summary>
@@ -140,8 +247,17 @@ namespace DbUp.Support.SqlServer
             return string.Format(@"create table {0} (
 	[Id] int identity(1,1) not null constraint {1} primary key,
 	[ScriptName] nvarchar(255) not null,
-	[Applied] datetime not null
+	[Applied] datetime not null,
+    [BatchNumber] int not null
 )", tableName, primaryKeyConstraintName);
+        }
+
+        protected virtual string AddBatchNumberColumn(string schema, string table)
+        {
+            var tableName = CreateTableName(schema, table);
+
+            return string.Format(@"ALTER TABLE {0}  ADD [BatchNumber] INT NOT NULL DEFAULT(0) ", tableName);
+
         }
 
         /// <summary>Combine the <c>schema</c> and <c>table</c> values into an appropriately-quoted identifier for the journal table.</summary>
@@ -185,6 +301,32 @@ namespace DbUp.Support.SqlServer
             });
         }
 
+        /// <summary>
+        /// Check if the batchNumber column exists
+        /// </summary>
+        /// <returns></returns>
+        private bool DoesBatchNumberColumnExists()
+        {
+            return connectionManager().ExecuteCommandsWithManagedConnection(dbCommandFactory =>
+            {
+                try
+                {
+                    using (var command = dbCommandFactory())
+                    {
+                        return VerifyBatchNumberColumnExistsCommand(command, table, schema);
+                    }
+                }
+                catch (SqlException)
+                {
+                    return false;
+                }
+                catch (DbException)
+                {
+                    return false;
+                }
+            });
+        }
+
         /// <summary>Verify, using database-specific queries, if the table exists in the database.</summary>
         /// <param name="command">The <c>IDbCommand</c> to be used for the query</param>
         /// <param name="tableName">The name of the table</param>
@@ -199,5 +341,16 @@ namespace DbUp.Support.SqlServer
             var result = command.ExecuteScalar() as int?;
             return result == 1;
         }
+
+        protected virtual bool VerifyBatchNumberColumnExistsCommand(IDbCommand command, string tableName, string schemaName)
+        {
+            command.CommandText = string.IsNullOrEmpty(schema)
+                            ? string.Format("select 1 from information_schema.COLUMNS where COLUMN_NAME ='BatchNumber' and TABLE_NAME='{0}'", tableName)
+                            : string.Format("select 1 from information_schema.COLUMNS where COLUMN_NAME ='BatchNumber' and TABLE_NAME='{0}' and TABLE_SCHEMA = '{1}'", tableName, schemaName);
+            command.CommandType = CommandType.Text;
+            var result = command.ExecuteScalar() as int?;
+            return result == 1;
+        }
+
     }
 }

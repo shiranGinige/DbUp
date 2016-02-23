@@ -49,6 +49,7 @@ namespace DbUp.Support.Postgresql
                                 schemaversionsid serial NOT NULL,
                                 scriptname character varying(255) NOT NULL,
                                 applied timestamp without time zone NOT NULL,
+                                BatchNumber NOT NULL,
                                 CONSTRAINT {1} PRIMARY KEY (schemaversionsid)
                               )", tableName, primaryKeyName);
         }
@@ -80,6 +81,20 @@ namespace DbUp.Support.Postgresql
             });
 
             return scripts.ToArray();
+        }
+
+        public string[] GetExecutedScriptsOnBatchNumber(int batchNumber)
+        {
+            throw new NotImplementedException();
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        public int GetCurrentBatchNumber()
+        {
+            throw new NotImplementedException();
         }
 
         /// <summary>
@@ -129,10 +144,21 @@ namespace DbUp.Support.Postgresql
             });
         }
 
+        public void UpdateScriptEntry(string scriptName)
+        {
+            throw new NotImplementedException();
+        }
+
         private static string GetExecutedScriptsSql(string schema, string table)
         {
             var tableName = CreateTableName(schema, table);
             return string.Format("select ScriptName from {0} order by ScriptName", tableName);
+        }
+
+        private static string GetCurrentVersionScript(string schema, string table)
+        {
+            var tableName = CreateTableName(schema, table);
+            return string.Format("SELECT MAX(VersionNumber) FROM {0}", tableName);
         }
 
         private static string CreateTableName(string schema, string table)

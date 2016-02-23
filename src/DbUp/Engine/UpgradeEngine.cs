@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using DbUp.Builder;
 
 namespace DbUp.Engine
@@ -10,6 +11,9 @@ namespace DbUp.Engine
     /// </summary>
     public class UpgradeEngine
     {
+        private const string RollbackSuffix = "_rollback.sql";
+        private const string SqlExtension = ".sql";
+
         private readonly UpgradeConfiguration configuration;
 
         /// <summary>
@@ -88,6 +92,55 @@ namespace DbUp.Engine
         }
 
         /// <summary>
+        /// Performs the downgrade of the specified version
+        /// </summary>
+        /// <param name="toVersion"></param>
+        /// <returns></returns>
+        public DatabaseUpgradeResult PerformDowngrade(int toVersion)
+        {
+            var executed = new List<SqlScript>();
+
+            string executedScriptName = null;
+            try
+            {
+                using (configuration.ConnectionManager.OperationStarting(configuration.Log, executed))
+                {
+
+                    configuration.Log.WriteInformation("Beginning database downgrade");
+
+                    var scriptsToExecute = GetScriptsToExecuteInOrderToDowngradeToBatch(toVersion);
+
+                    if (scriptsToExecute.Count == 0)
+                    {
+                        configuration.Log.WriteInformation("No downgrade scripts to be executed - completing.");
+                        return new DatabaseUpgradeResult(executed, true, null);
+                    }
+
+                    foreach (var script in scriptsToExecute)
+                    {
+                        executedScriptName = script.Name;
+
+                        configuration.ScriptExecutor.Execute(script, configuration.Variables);
+
+                        string originalScriptName = script.Name.Replace(RollbackSuffix, SqlExtension);
+                        configuration.Journal.UpdateScriptEntry(originalScriptName);
+
+                        executed.Add(script);
+                    }
+
+                    configuration.Log.WriteInformation("Upgrade successful");
+                    return new DatabaseUpgradeResult(executed, true, null);
+                }
+            }
+            catch (Exception ex)
+            {
+                ex.Data.Add("Error occurred in script: ", executedScriptName);
+                configuration.Log.WriteError("Downgrade failed due to an unexpected exception:\r\n{0}", ex.ToString());
+                return new DatabaseUpgradeResult(executed, false, ex);
+            }
+        }
+
+        /// <summary>
         /// Returns a list of scripts that will be executed when the upgrade is performed
         /// </summary>
         /// <returns>The scripts to be executed</returns>
@@ -104,7 +157,16 @@ namespace DbUp.Engine
             var allScripts = configuration.ScriptProviders.SelectMany(scriptProvider => scriptProvider.GetScripts(configuration.ConnectionManager));
             var executedScripts = configuration.Journal.GetExecutedScripts();
 
-            return allScripts.Where(s => !executedScripts.Any(y => y == s.Name)).ToList();
+            return allScripts.Where(s => !executedScripts.Any(y => y == s.Name) && !s.Name.EndsWith(RollbackSuffix)).ToList();
+        }
+
+        private List<SqlScript> GetScriptsToExecuteInOrderToDowngradeToBatch(int batchNumber)
+        {
+            var allRollBackScripts = configuration.ScriptProviders.SelectMany(scriptProvider => scriptProvider.GetScripts(configuration.ConnectionManager)).Where(a => a.Name.EndsWith(RollbackSuffix));
+            var executedScriptsOnBatch = configuration.Journal.GetExecutedScriptsOnBatchNumber(batchNumber);
+
+            var releventRollBackScripts = allRollBackScripts.Where(s => executedScriptsOnBatch.Any(a => a.Replace(SqlExtension, RollbackSuffix) == s.Name)).ToList();
+            return releventRollBackScripts;
         }
 
         public List<string> GetExecutedScripts()
