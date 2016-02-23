@@ -14,6 +14,7 @@ namespace DbUp.Console
             var directory = "";
             var username = "";
             var password = "";
+            var rollback = "";
             bool mark = false;
             var connectionString = "";
 
@@ -30,6 +31,7 @@ namespace DbUp.Console
                 { "cs|connectionString=", "Full connection string", cs => connectionString = cs},
                 { "h|help",  "show this message and exit", v => show_help = v != null },
                 {"mark", "Mark scripts as executed but take no action", m => mark = true},
+                {"rollback=", "rollbacks the specified batch", r => rollback = r}
             };
 
             optionSet.Parse(args);
@@ -60,7 +62,16 @@ namespace DbUp.Console
             if (!mark)
             {
                 if (ensure_database) EnsureDatabase.For.SqlDatabase(connectionString);
-                result = dbup.PerformUpgrade();
+                if (!string.IsNullOrWhiteSpace(rollback))
+                {
+                    int rollbackVersion = int.Parse(rollback);
+                    result = dbup.PerformDowngrade(rollbackVersion);
+                }
+                else
+                {
+                    result = dbup.PerformUpgrade();
+                }
+               
             }
             else
             {
